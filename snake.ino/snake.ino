@@ -3,6 +3,7 @@
   #include <ListLib.h>
   #include <LiquidCrystal_I2C.h>
   #include <Wire.h>
+  #include <TimerOne.h>
 
   #define PI 3.14
 
@@ -98,7 +99,7 @@ LiquidCrystal_I2C screen(SCREENPIN, SCREENWIDTH, SCREENHEIGHT);
       uint32_t toColor() {
         return strip.Color(round(this->r), round(this->g), round(this->b));
       }
-      normalize() {
+      void normalize() {
         double lowest = min(this->r, min(this->g, this->b))+1.0-1.0;
         this->r -= lowest;
         this->g -= lowest;
@@ -193,8 +194,11 @@ LiquidCrystal_I2C screen(SCREENPIN, SCREENWIDTH, SCREENHEIGHT);
   const int COLS = 8;
 
   int RAND_PRECISION = 1000;
-  int TIMESTEP = 25;
-  int update_cycle = 0;
+  int TIMESTEP = 200;
+
+  float deathFlicker = 250.0;
+  int deathTime = 2500;
+  int AIstart = 1000;
 
 //rotary encoders
   int clkPins[4] = {23, 25, 27, 29};
@@ -220,6 +224,7 @@ LiquidCrystal_I2C screen(SCREENPIN, SCREENWIDTH, SCREENHEIGHT);
     {1,1,1,1,0,1,1}, // 9
     {0,0,0,0,0,0,0}  // blank
   };
+  int current_nums[4] = {10, 10, 10, 10};
 
 int INDEX_TRANSFORMS[ROWS][COLS] = {
   {39, 38, 37, 36, 35, 34, 33, 32},
@@ -232,7 +237,12 @@ int INDEX_TRANSFORMS[ROWS][COLS] = {
 Menu menu;
 unsigned long timeSinceLastMenu;
 
+unsigned long lastUpdate;
+
 void setup() {
+
+  Timer1.initialize(2500);
+  Timer1.attachInterrupt(displayNums);
 
   // pinMode(6, OUTPUT);
 
@@ -254,7 +264,7 @@ void setup() {
   pinMode(P2_PUSH, INPUT_PULLUP);
 
   //initialize board pins
-  strip.begin(); strip.clear(); strip.show(); delay(100);
+  strip.begin(); strip.clear(); strip.show();
   strip.setBrightness(50);
   strip.show();
 
@@ -337,19 +347,17 @@ void loop() {
   // digitalWrite(6, HIGH);
   display();
   if (dead) {
-    update_cycle++;
-    if (digitalRead(P1_PUSH) == LOW && digitalRead(P2_PUSH) == LOW) {
+    if (digitalRead(P1_PUSH) == LOW && digitalRead(P2_PUSH) == LOW || millis()-lastUpdate >= AIstart) {
       // Serial.println("****");
       dead = false;
       P1_wins = false;
       P2_wins = false;
-      P1_AI = false;
-      P2_AI = false;
       P1_AI_counter = 0;
       P2_AI_counter = 0;
       resetSnakes();
+      P1_AI = millis()-lastUpdate >= AIstart;
+      P2_AI = millis()-lastUpdate >= AIstart;
       start_timer = 3;
-      update_cycle = 0;
       P1_Moving = true;
     }
     displayScreen(P1_Length, P2_Length);
@@ -357,9 +365,8 @@ void loop() {
     LCDDisplay();
   } else if (start_timer > 0) {
     // Serial.println("OH ****");
-    update_cycle++;
-    if (update_cycle >= TIMESTEP) {
-      update_cycle -= TIMESTEP;
+    if (millis()-lastUpdate >= TIMESTEP) {
+      lastUpdate = millis();
       if (digitalRead(P1_PUSH) == LOW) {
         P2_AI_counter ++;
       }
@@ -376,10 +383,9 @@ void loop() {
     if (P2_AI_counter == 3) {
       P2_AI = true;
     }
-    update_cycle++;
     responsive_turn();
-    if (update_cycle >= TIMESTEP) {
-      update_cycle -= TIMESTEP;
+    if (millis()-lastUpdate >= TIMESTEP) {
+      lastUpdate = millis();
       if (P1_Moving) {
         move_P1();
         tick_apple();
@@ -534,6 +540,7 @@ void loop() {
     
 
     if (abs(x_read) > 0 || abs(y_read) > 0) {
+      P1_AI = false;
       if (abs(y_read) >= abs(x_read)) {
         if (y_read > 0) {
           turn_P1(D);
@@ -563,6 +570,7 @@ void loop() {
     
 
     if (abs(x_read) > 0 || abs(y_read) > 0) {
+      P2_AI = false;
       if (abs(y_read) >= abs(x_read)) {
         if (y_read > 0) {
           turn_P2(D);
@@ -605,7 +613,6 @@ void loop() {
       )
     {
       dead = true;
-      update_cycle = 0;
       P1_wins = false;
       P2_wins = true;
     }
@@ -645,7 +652,6 @@ void loop() {
       )
     {
       dead = true;
-      update_cycle = 0;
       P1_wins = true;
       P2_wins = false;
     }
@@ -742,7 +748,7 @@ void loop() {
     for (int i = 0; i < P1.Count(); i++) {
       int index = pos_to_index(P1[i].x, P1[i].y);
       if (index != -1) {
-        if (((round(pow(2.5, ((update_cycle)/50.0))))%2-1.0 >= 0 && (update_cycle < 250)) || P1_wins || !P2_wins || !dead) {
+        if (((round(pow(2.5, ((millis()-lastUpdate)/deathFlicker))))%2-1.0 >= 0 && (millis()-lastUpdate < deathTime)) || P1_wins || !P2_wins || !dead) {
           if (i == P1.Count()-1) {
             strip.setPixelColor(index, rgb(colors[1]).toColor());
           } else {
@@ -755,7 +761,7 @@ void loop() {
     for (int i = 0; i < P2.Count(); i++) {
       int index = pos_to_index(P2[i].x, P2[i].y);
       if (index != -1) {
-        if (((round(pow(2.5, ((update_cycle)/50.0))))%2-1.0 >= 0 && (update_cycle < 250)) || !P1_wins || P2_wins || !dead) {
+        if (((round(pow(2.5, ((millis()-lastUpdate)/deathFlicker))))%2-1.0 >= 0 && (millis()-lastUpdate < deathTime)) || !P1_wins || P2_wins || !dead) {
           if (i == P2.Count()-1) {
             strip.setPixelColor(index, rgb(colors[4]).toColor());
           } else {
@@ -793,33 +799,32 @@ void loop() {
   }
 
   void displayScreen(int num1, int num2) {
-    int nums[4] = {10,10,10,10};
+    current_nums[0] = 10;
+    current_nums[1] = 10;
+    current_nums[2] = 10;
+    current_nums[3] = 10;
     if (num1 < 10) {
-      nums[0] = num1;
+      current_nums[0] = num1;
     } else {
-      nums[0] = num1/10;
-      nums[1] = num1%10;
+      current_nums[0] = num1/10;
+      current_nums[1] = num1%10;
     }
     if (num2 < 10) {
-      nums[3] = num2;
+      current_nums[3] = num2;
     } else {
-      nums[2] = num2/10;
-      nums[3] = num2%10;
+      current_nums[2] = num2/10;
+      current_nums[3] = num2%10;
     }
 
-    displayNums(nums);
+    // displayNums(nums);
 
   }
 
-  void displayNums(int nums[4]) {
-    if (millis()-lastDigitSwitch > 5) {
-      // Serial.println(millis()-lastDigitSwitch);
-      lastDigitSwitch = millis();
-      digitalWrite(DIGIT_PINS[lastUpdatedDigit], HIGH);
-      lastUpdatedDigit = (lastUpdatedDigit+1)%4;
-      digitalWrite(DIGIT_PINS[lastUpdatedDigit], LOW);
-      displayNum(nums[lastUpdatedDigit]);
-    }
+  void displayNums() {
+    digitalWrite(DIGIT_PINS[lastUpdatedDigit], HIGH);
+    lastUpdatedDigit = (lastUpdatedDigit+1)%4;
+    digitalWrite(DIGIT_PINS[lastUpdatedDigit], LOW);
+    displayNum(current_nums[lastUpdatedDigit]);
   }
 
   void displayNum(int num) {
